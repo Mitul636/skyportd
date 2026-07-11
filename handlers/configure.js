@@ -28,20 +28,49 @@ function updateConfig(configPath, newConfig) {
   fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
 }
 
-// Function to make HTTP/HTTPS request
-function makeHttpRequest(url, method, data) {
+// Function to make HTTP/HTTPS request with recursive redirect following
+function makeHttpRequest(urlStr, method, data, redirectCount = 0) {
   return new Promise((resolve, reject) => {
-    const isHttps = url.startsWith("https://");
+    // Prevent infinite redirect loops
+    if (redirectCount > 5) {
+      return reject(new Error("Too many redirects"));
+    }
+
+    const isHttps = urlStr.startsWith("https://");
     const lib = isHttps ? https : http;
 
-    const req = lib.request(url, { method }, (res) => {
+    const req = lib.request(urlStr, { method }, (res) => {
+      // Handle HTTP redirects (301, 302, 303, 307, 308)
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        let redirectUrl = res.headers.location;
+        // Resolve relative redirects
+        if (!redirectUrl.startsWith("http")) {
+          redirectUrl = new URL(redirectUrl, urlStr).toString();
+        }
+        
+        let nextMethod = method;
+        // HTTP spec: 301, 302, 303 change POST to GET. 307 and 308 strictly preserve the method.
+        if (method === "POST" && [301, 302, 303].includes(res.statusCode)) {
+          nextMethod = "GET";
+        }
+
+        console.log(`Following redirect (${res.statusCode}) to: ${redirectUrl}`);
+        return resolve(makeHttpRequest(redirectUrl, nextMethod, data, redirectCount + 1));
+      }
+
       let responseBody = "";
       res.on("data", (chunk) => {
         responseBody += chunk;
       });
+      
       res.on("end", () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(JSON.parse(responseBody));
+          try {
+            resolve(JSON.parse(responseBody));
+          } catch (e) {
+            // For cases where response might not be JSON
+            resolve(responseBody);
+          }
         } else {
           reject(
             new Error(
@@ -53,7 +82,13 @@ function makeHttpRequest(url, method, data) {
     });
 
     req.on("error", reject);
-    if (data) req.write(JSON.stringify(data));
+    
+    // Write data if provided
+    if (data && method !== "GET") {
+      req.setHeader("Content-Type", "application/json");
+      req.write(JSON.stringify(data));
+    }
+    
     req.end();
   });
 }
