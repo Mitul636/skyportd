@@ -128,6 +128,7 @@ async function configureNode() {
     console.log("Node configured successfully!");
     console.log("New configuration:");
     console.log(JSON.stringify(config, null, 2));
+    process.exit(0);
   } catch (error) {
     console.error("Error configuring node:", error);
     process.exit(1);
